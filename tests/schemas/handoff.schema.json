@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/handoff/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "id", "task_id", "session_id", "created_at", "state_revision", "checkpoint", "workspace", "objective", "next_action", "blockers", "sections"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "Handoff"},
+    "id": {"type": "string", "pattern": "^H-[0-9]{8}-[0-9]{3}$"},
+    "task_id": {"type": "string", "pattern": "^T-[0-9]{4}$"},
+    "session_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "checkpoint": {
+      "type": "object",
+      "required": ["commit", "tree_state", "validation_run_ids"],
+      "properties": {
+        "commit": {"type": ["string", "null"]},
+        "tree_state": {"enum": ["clean", "provisional-dirty", "intentional-post-commit"]},
+        "validation_run_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["root", "git_head", "branch", "dirty_paths"],
+      "properties": {
+        "root": {"type": ["string", "null"]},
+        "git_head": {"type": ["string", "null"]},
+        "branch": {"type": ["string", "null"]},
+        "dirty_paths": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "objective": {"type": "string", "minLength": 1},
+    "next_action": {"type": "string", "minLength": 1},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "sections": {"type": "array", "minItems": 8, "items": {"type": "string", "minLength": 1}}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generated context packs are rebuildable from the records they project.
+.agent-workspace/generated/context/
+
+# Trust zones hold hand-written READMEs that must stay versioned; their
+# contents are scratch and must not be committed.
+.agent-workspace/scratch/*
+!.agent-workspace/scratch/README.md
+.agent-workspace/quarantine/*
+!.agent-workspace/quarantine/README.md
+
+# The archive zone is deliberately NOT ignored. It is terminal history:
+# ignoring it would drop the only record of a closed task. The doctor fails
+# the build if that ever changes.

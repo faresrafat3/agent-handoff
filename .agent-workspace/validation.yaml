@@ -1,0 +1,13 @@
+schema_version: 1
+kind: ValidationPolicy
+profiles:
+  repo-fast:
+    steps:
+      - id: structure-review
+        kind: manual
+        description: "Review the initialized workspace and record the first baseline."
+        network: false
+        mutation: false
+scope_requirements:
+  root: [repo-fast]
+extensions: {}

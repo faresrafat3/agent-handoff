@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/minimal-task/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "id", "slug", "title", "status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "Task"},
+    "id": {"type": "string", "pattern": "^T-[0-9]{4}$"},
+    "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["intake", "research", "specified", "planned", "in_progress", "validating", "done", "cancelled"]}
+  },
+  "additionalProperties": true
+}

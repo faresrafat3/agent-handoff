@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/sources/v1",
+  "type": "object",
+  "required": ["sources"],
+  "properties": {
+    "sources": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "kind", "title", "url", "accessed_at", "locator", "confidence", "supports"], "properties": {"id": {"type": "string", "pattern": "^S[0-9]+$"}, "kind": {"type": "string"}, "title": {"type": "string"}, "publisher": {"type": "string"}, "url": {"type": "string", "format": "uri"}, "published_at": {"type": ["string", "number", "null"]}, "accessed_at": {"type": "string"}, "locator": {"type": "string"}, "confidence": {"enum": ["high", "medium-high", "medium", "low"]}, "supports": {"type": "array", "items": {"type": "string"}}, "limitations": {"type": "string"}}, "additionalProperties": true}}
+  },
+  "additionalProperties": false
+}

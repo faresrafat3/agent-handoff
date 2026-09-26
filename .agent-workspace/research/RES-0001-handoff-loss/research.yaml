@@ -1,0 +1,13 @@
+schema_version: 1
+kind: Research
+id: RES-0001
+slug: handoff-loss
+title: Which handoff defects are silent, and which gate catches each
+question: Of the ways a handoff record can be wrong, which are invisible to a human reader, and which validator gate catches each one?
+status: verified
+scope_ids: [root]
+related_tasks: []
+method: Enumerate the defect classes that were observed while building this tool, then map each to the specific gate in bin/agent-handoff that rejects it. Every claim below is a pointer to code that can be read and run.
+limitations: Derived from one workspace and one agent harness. The taxonomy has not been checked against a second project, and no claim here is backed by an external source.
+created_at: 2026-09-26T15:00:00Z
+updated_at: 2026-09-26T15:00:00Z

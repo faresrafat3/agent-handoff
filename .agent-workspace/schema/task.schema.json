@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/task/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "id", "slug", "title", "type", "status", "primary_scope", "affected_scopes", "depends_on", "related"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "Task"},
+    "id": {"type": "string", "pattern": "^T-[0-9]{4}$"},
+    "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "title": {"type": "string", "minLength": 1},
+    "type": {"enum": ["feature", "bug", "research", "spec", "maintenance", "migration", "chore"]},
+    "status": {"enum": ["intake", "research", "specified", "planned", "in_progress", "validating", "done", "cancelled"]},
+    "priority": {"enum": ["p0", "p1", "p2", "p3"]},
+    "primary_scope": {"type": "string"},
+    "affected_scopes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "depends_on": {"type": "array", "items": {"type": "string", "pattern": "^T-[0-9]{4}$"}},
+    "related": {"type": "object", "required": ["research", "decisions"], "properties": {"research": {"type": "array", "items": {"type": "string"}}, "decisions": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+    "created_at": {"type": "string"}, "updated_at": {"type": "string"}, "closed_at": {"type": ["string", "null"]}, "outcome": {"type": ["string", "null"]}, "extensions": {"type": "object"}
+  },
+  "additionalProperties": false
+}

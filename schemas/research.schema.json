@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/research/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "id", "slug", "title", "question", "status", "scope_ids", "related_tasks"],
+  "properties": {
+    "schema_version": {"const": 1}, "kind": {"const": "Research"}, "id": {"type": "string", "pattern": "^RES-[0-9]{4}$"}, "slug": {"type": "string"}, "title": {"type": "string"}, "question": {"type": "string", "minLength": 1}, "status": {"enum": ["planned", "active", "synthesized", "verified", "stale"]}, "scope_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "related_tasks": {"type": "array", "items": {"type": "string"}}, "created_at": {"type": "string"}, "updated_at": {"type": "string"}, "review_by": {"type": "string"}, "method": {"type": "string"}, "limitations": {"type": "string"}, "extensions": {"type": "object"}
+  },
+  "additionalProperties": false
+}

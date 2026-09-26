@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/decision/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "id", "title", "status", "context", "decision", "alternatives", "consequences", "risks", "rollback", "evidence", "revisit_conditions"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "Decision"},
+    "id": {"type": "string", "pattern": "^ADR-[0-9]{4}$"},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["proposed", "accepted", "rejected", "superseded"]},
+    "scope_ids": {"type": "array", "items": {"type": "string"}},
+    "related_tasks": {"type": "array", "items": {"type": "string"}},
+    "supersedes": {"type": "array", "items": {"type": "string"}},
+    "superseded_by": {"type": ["string", "null"]},
+    "context": {"type": "string", "minLength": 1},
+    "decision": {"type": "string", "minLength": 1},
+    "alternatives": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "consequences": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "risks": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "rollback": {"type": "string", "minLength": 1},
+    "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "revisit_conditions": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

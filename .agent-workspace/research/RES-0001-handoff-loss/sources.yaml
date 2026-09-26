@@ -1,0 +1,10 @@
+sources:
+  - id: S1
+    kind: code
+    title: The validator gates in this repository
+    url: https://github.com/faresrafat3/agent-handoff/blob/main/bin/agent-handoff
+    accessed_at: 2026-09-26
+    locator: section_is_substantive, is_actionable, sections_are_independent, check_doctor
+    confidence: high
+    supports: [C-1, C-2, C-3]
+    limitations: Self-referential. These gates are the thing being described, so they cannot independently confirm their own necessity.

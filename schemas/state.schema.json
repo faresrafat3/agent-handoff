@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continuum/task-state/v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "task_id", "state_revision", "status", "phase", "readiness", "next_action", "working_tree", "validation", "latest_handoff", "execution"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "TaskState"},
+    "task_id": {"type": "string", "pattern": "^T-[0-9]{4}$"},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "as_of": {"type": "string"},
+    "status": {"enum": ["intake", "research", "specified", "planned", "in_progress", "validating", "done", "cancelled"]},
+    "phase": {"enum": ["discover", "research", "specify", "plan", "implement", "validate", "review", "handoff"]},
+    "readiness": {"enum": ["ready", "blocked"]},
+    "active_step": {"type": ["string", "null"]},
+    "next_action": {"type": "string", "minLength": 1},
+    "last_verified_commit": {"type": ["string", "null"]},
+    "working_tree": {"enum": ["clean", "intentional-dirty"]},
+    "dirty_paths": {"type": "array", "items": {"type": "string"}},
+    "validation": {
+      "type": "object",
+      "required": ["status", "run_ids"],
+      "properties": {
+        "status": {"enum": ["not_run", "pass", "fail", "partial", "not_applicable"]},
+        "run_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "latest_handoff": {"type": ["string", "null"]},
+    "execution": {"type": "object"},
+    "blockers": {"type": "array"},
+    "decisions_pending": {"type": "array"},
+    "assumptions": {"type": "array"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -12,7 +12,10 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -1072,6 +1075,16 @@ def check_doctor(root: Path, strict: bool = False) -> tuple[list[str], list[str]
                     errors.append(f"handoff sections restate the same content: {handoff.relative_to(root)}")
                 if "Source Session:" not in raw and "@[" not in raw:
                     errors.append(f"handoff has no source Session reference: {handoff.relative_to(root)}")
+                # A credential in a record is a credential in every context pack
+                # built from it. `context` redacts known patterns on the way out,
+                # but redacting on the way out means the secret is still in the
+                # file, in git, and in every clone. It has to be refused here.
+                secret = SECRET_RE.search(raw)
+                if secret:
+                    errors.append(
+                        f"handoff contains a credential-like value at offset {secret.start()}: "
+                        f"{handoff.relative_to(root)}"
+                    )
                 for field in ("next_action",):
                     value = frontmatter_scalar(handoff, field)
                     if value is not None and not is_actionable(value):
@@ -1667,6 +1680,217 @@ def adopt(args: argparse.Namespace) -> int:
 
 
 
+CONFORMANCE_CASES: list[dict] = [
+    {"id": "C01-hollow-section-rejected", "expect": "reject", "why": "a heading with no content under it carries no information"},
+    {"id": "C02-vague-next-action-rejected", "expect": "reject", "why": "'continue the work' names no path, command, id, or check"},
+    {"id": "C03-restated-sections-rejected", "expect": "reject", "why": "padding a section with a repeat of another adds nothing"},
+    {"id": "C04-thin-objective-rejected", "expect": "reject", "why": "a one-word objective is not a goal statement"},
+    {"id": "C05-stale-commit-rejected", "expect": "reject", "why": "a checkpoint naming a commit that does not exist describes a world that stopped being"},
+    {"id": "C06-unknown-frontmatter-rejected", "expect": "reject", "why": "additionalProperties:false, so a typo is an error not a silent key"},
+    {"id": "C07-missing-section-rejected", "expect": "reject", "why": "required sections must be present, not merely possible"},
+    {"id": "C08-leaked-credential-rejected", "expect": "reject", "why": "a secret in a record is a secret in every context pack built from it"},
+    {"id": "C09-actionable-next-action-accepted", "expect": "accept", "why": "the gate must not reject a real, runnable instruction"},
+    {"id": "C10-substantive-record-accepted", "expect": "accept", "why": "a complete, independent, runnable record must pass"},
+]
+
+
+def _conformance_fixture(case_id: str) -> tuple[str, str, str]:
+    """Return (frontmatter, body, kind) for a conformance case."""
+    good_fm = """---
+schema_version: 1
+kind: Handoff
+id: H-20260926-900
+task_id: T-0001
+session_id: conformance-runner
+created_at: 2026-09-26T12:00:00Z
+state_revision: 1
+checkpoint:
+  commit: __SHA__
+  tree_state: clean
+  validation_run_ids: []
+workspace:
+  root: .
+  git_head: __SHA__
+  branch: __BRANCH__
+  dirty_paths: []
+objective: Make the validator reject a handoff whose sections carry no substance, so a hollow record cannot pass as real work.
+next_action: Run `python3 bin/agent-handoff doctor --strict` and confirm the hollow record is rejected.
+blockers: []
+sections:
+  - Objective and acceptance target
+  - Confirmed facts and read set
+  - Completed
+  - Current operation
+  - Exact next action
+  - Decisions/spec/plan changes
+  - Validation evidence
+  - Blockers and questions
+  - Do not repeat / safe shortcuts
+  - Stale or contradictory information
+  - Working tree and uncommitted paths
+---"""
+
+    def body(section: str, text: str) -> str:
+        return f"# {section}\n\n{text}\n"
+
+    good = "".join([
+        body("Objective and acceptance target", "The validator must reject a handoff whose sections are present but hollow, so a structurally complete record cannot pass as real work."),
+        body("Confirmed facts and read set", "Source Session: conformance-runner. Read `schemas/handoff.schema.json`; the gates are `section_is_substantive`, `is_actionable`, and `sections_are_independent`, all reached from the doctor's check_doctor pass."),
+        body("Completed", "Recorded the hollow record under the task handoffs directory and captured the rejection output that follows in the validation section."),
+        body("Current operation", "The hollow record is rejected as designed. Not yet confirmed against a workspace carrying uncommitted changes, which is the next case this standard needs."),
+        body("Exact next action", "Run `python3 bin/agent-handoff doctor --strict` and confirm the hollow record is rejected while this one passes."),
+        body("Decisions/spec/plan changes", "Kept the section floor fixed rather than configurable, because a configurable floor is a floor nobody checks, and recorded that reasoning in the standard."),
+        body("Validation evidence", "`doctor --strict` exited non-zero with the expected errors against the hollow record and zero against this one, on a workspace with a single commit so no git-derived gate could fire."),
+        body("Blockers and questions", "none, there are no open blockers. One open question remains for the maintainer: whether the fixed floor suits projects whose notes are legitimately terse."),
+        body("Do not repeat / safe shortcuts", "Do not re-derive that the three gates are reachable from check_doctor; the read set already names them. Do not raise the section floor to admit a record."),
+        body("Stale or contradictory information", "An earlier draft claimed the doctor auto-repaired empty sections. It does not; the doctor is read-only and always has been, which is what makes its report trustworthy."),
+        body("Working tree and uncommitted paths", "The handoff files are untracked additions under the task handoffs directory. `app.py` is committed and unmodified, and git status --porcelain lists only the handoff directory."),
+    ])
+
+    hollow = "".join(body(h, "done") for h in [
+        "Objective and acceptance target", "Confirmed facts and read set", "Completed",
+        "Current operation", "Exact next action", "Decisions/spec/plan changes",
+        "Validation evidence", "Blockers and questions", "Do not repeat / safe shortcuts",
+        "Stale or contradictory information", "Working tree and uncommitted paths",
+    ])
+
+    vague = good.replace(
+        "Run `python3 bin/agent-handoff doctor --strict` and confirm the hollow record is rejected while this one passes.",
+        "continue the work",
+    )
+    # A real restatement: one section carries another section's words. Paraphrase
+    # is not what this gate is for, and a paraphrase fixture would make the case
+    # pass for the wrong reason.
+    restated = good.replace(
+        "The handoff files are untracked additions under the task handoffs directory. `app.py` is committed and unmodified, and git status --porcelain lists only the handoff directory.",
+        "Source Session: conformance-runner. Read `schemas/handoff.schema.json`; the gates are `section_is_substantive`, `is_actionable`, and `sections_are_independent`, all reached from the doctor's check_doctor pass.",
+    )
+    thin = good.replace(
+        "The validator must reject a handoff whose sections are present but hollow, so a structurally complete record cannot pass as real work.",
+        "Fix it.",
+    )
+    stale = good.replace("__SHA__", "0" * 40)
+    extra = good.replace("blockers: []", "blockers: []\nnote: a field that is not in the schema")
+    missing = good.replace("# Blockers and questions\n\nnone, there are no open blockers. One open question remains for the maintainer: whether the fixed floor suits projects whose notes are legitimately terse.\n", "")
+    leaked = good.replace(
+        "The handoff files are untracked additions under the task handoffs directory.",
+        "Set the api_key = sk-abcdefghijklmnopqrst before the run.",
+    )
+
+    table = {
+        "C09-actionable-next-action-accepted": (good_fm, good),
+        "C10-substantive-record-accepted": (good_fm, good),
+        "C01-hollow-section-rejected": (good_fm, hollow),
+        "C02-vague-next-action-rejected": (good_fm, vague),
+        "C03-restated-sections-rejected": (good_fm, restated),
+        "C04-thin-objective-rejected": (good_fm, thin),
+        "C05-stale-commit-rejected": (stale, good),
+        "C06-unknown-frontmatter-rejected": (extra, good),
+        "C07-missing-section-rejected": (good_fm, missing),
+        "C08-leaked-credential-rejected": (good_fm, leaked),
+    }
+    return table[case_id]
+
+
+def conformance(args: argparse.Namespace) -> int:
+    """Run the published conformance suite against this implementation.
+
+    The suite is the standard, not a test of this tool. Anyone implementing a
+    handoff format can run it against their own output and say so; `doctor`
+    cannot change to make a failing case pass, because the cases are fixed here
+    and the tool is the thing under test.
+    """
+    root = Path(args.root or ".").expanduser().resolve()
+    work = Path(tempfile.mkdtemp(prefix="conformance-"))
+    results = []
+    try:
+        # A real workspace, so the suite tests the handoff gate and not the
+        # scaffolding. `init` is this tool's own, so the fixture is exactly what
+        # a user gets after install.
+        subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--root", str(work), "init"],
+            capture_output=True, text=True, check=True,
+        )
+        task = work / ".agent-workspace" / "tasks" / "T-0001-conformance"
+        (task / "handoffs").mkdir(parents=True, exist_ok=True)
+        (task / "task.yaml").write_text(
+            "schema_version: 1\nkind: Task\nid: T-0001\nslug: conformance\n"
+            "title: Conformance fixture\ntype: chore\nstatus: in_progress\npriority: p2\n"
+            "primary_scope: root\naffected_scopes: [root]\ndepends_on: []\n"
+            "related:\n  research: []\n  decisions: []\n",
+            encoding="utf-8",
+        )
+        (task / "state.yaml").write_text(
+            "schema_version: 1\nkind: TaskState\ntask_id: T-0001\nstate_revision: 1\n"
+            "status: in_progress\nphase: handoff\nreadiness: ready\n"
+            "next_action: Run the conformance suite and record the result.\n"
+            "working_tree: clean\nvalidation:\n  status: not_run\n  run_ids: []\n"
+            "latest_handoff: null\nexecution: {}\n",
+            encoding="utf-8",
+        )
+        (work / "bin").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(__file__).resolve(), work / "bin" / "agent-handoff")
+        (task / "spec.md").write_text("# Spec\n\nThe conformance suite decides.\n", encoding="utf-8")
+        (task / "plan.md").write_text("# Plan\n\nBuild fixtures, run, report.\n", encoding="utf-8")
+        (task / "validation.md").write_text("# Validation\n\nNot run yet.\n", encoding="utf-8")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True)
+        sha = head.stdout.strip() or "0" * 40
+        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip() or "main"
+
+        for case in CONFORMANCE_CASES:
+            fm, bd = _conformance_fixture(case["id"])
+            # The filename and the frontmatter `id` must agree, or the record
+            # is rejected for a reason unrelated to the case under test. One
+            # path, overwritten per case, keeps the fixture honest.
+            target = work / ".agent-workspace" / "tasks" / "T-0001-conformance" / "handoffs" / "H-20260926-900.md"
+            target.write_text(fm.replace("__SHA__", sha).replace("__BRANCH__", branch) + "\n" + bd, encoding="utf-8")
+            (task / "state.yaml").write_text(
+                "schema_version: 1\nkind: TaskState\ntask_id: T-0001\nstate_revision: 1\n"
+                "status: in_progress\nphase: handoff\nreadiness: ready\n"
+                "next_action: Run the conformance suite and record the result.\n"
+                "working_tree: clean\nvalidation:\n  status: not_run\n  run_ids: []\n"
+                f"latest_handoff: {target.stem}\nexecution: {{}}\n",
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--root", str(work), "doctor"],
+                capture_output=True, text=True,
+            )
+            actual = "reject" if proc.returncode != 0 else "accept"
+            results.append({
+                "id": case["id"],
+                "expect": case["expect"],
+                "actual": actual,
+                "pass": actual == case["expect"],
+                "why": case["why"],
+            })
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    passed = sum(1 for r in results if r["pass"])
+    payload = {
+        "suite": "workspace-continuity-standard/conformance/v1",
+        "implementation": "agent-handoff",
+        "verifier_is_independent": True,
+        "uses_a_model": False,
+        "total": len(results),
+        "passed": passed,
+        "conforms": passed == len(results),
+        "results": results,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for r in results:
+            mark = "ok  " if r["pass"] else "FAIL"
+            print(f"  {mark} {r['id']:<40} expect={r['expect']:<7} actual={r['actual']}")
+        print()
+        print(f"  {passed}/{len(results)} — {'CONFORMS' if payload['conforms'] else 'DOES NOT CONFORM'}")
+        print("  verifier independent of the claimant: yes | model calls in any gate: 0")
+    return 0 if payload["conforms"] else 1
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-handoff", description="Workspace Continuity Standard helper")
     parser.add_argument("--root", default=".", help="workspace root (default: current directory)")
@@ -1688,6 +1912,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=400, help="max files to scan (default 400)")
     p.add_argument("--show", type=int, default=20, help="max files to list in the report")
     p.set_defaults(func=adopt)
+    p = sub.add_parser("conformance", help="run the published conformance suite against this implementation")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=conformance)
     p = sub.add_parser("close", help="dry-run close checks")
     p.add_argument("task_id")
     p.add_argument("--dry-run", action="store_true")

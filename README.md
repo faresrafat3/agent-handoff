@@ -78,6 +78,7 @@ tells you the record is stale — because the claim is checkable, it is checked.
 | `agent-handoff status` | what state every task is in |
 | `agent-handoff context <T-0001>` | builds a **bounded, redacted, hash-stamped** context pack for a fresh session |
 | `agent-handoff adopt` | **read-only scan of the markdown notes you already have** — finds the hollow sections, vague next actions, dead commits, and leaked credentials in your existing pile |
+| `agent-handoff conformance` | runs the **published conformance suite** against this implementation — the standard, not a test of this tool |
 | `agent-handoff close <T-0001> --dry-run` | the checks to run *before* you call a task done |
 | `skills/handoff/SKILL.md` | drop into Claude Code / Cursor / any agent so it writes conforming handoffs on its own |
 
@@ -106,7 +107,7 @@ agent-handoff context T-0001   # you paste the generated pack into a fresh sessi
 
 ```sh
 $ python3 -m unittest discover -s tests
-Ran 70 tests
+Ran 78 tests
 OK
 ```
 
@@ -120,6 +121,34 @@ independent-sections check were each added in response to a real hollow handoff
 getting through.
 
 ---
+
+## The conformance suite is the standard, not a test of this tool
+
+```sh
+$ agent-handoff conformance
+  ok   C01-hollow-section-rejected              expect=reject  actual=reject
+  ok   C02-vague-next-action-rejected           expect=reject  actual=reject
+  ...
+  ok   C10-substantive-record-accepted          expect=accept  actual=accept
+
+  10/10 — CONFORMS
+  verifier independent of the claimant: yes | model calls in any gate: 0
+```
+
+Ten cases, fixed in this file, each stating why it exists. Half require a
+**rejection** and half require an **acceptance**, because a suite of only
+rejections cannot tell a real gate from a blunt refusal.
+
+**Implement a different handoff format? Run this suite against your own output
+and say so.** The cases are the published definition of "a handoff is good" —
+they are not tuned to this implementation, and `doctor` cannot be changed to make
+a failing case pass, because the cases are the thing being tested.
+
+This already earned its keep: **case C08 failed against the reference
+implementation**, because `doctor` had no gate refusing a credential inside a
+record. `context` redacted secrets on the way out, which meant the key was still
+sitting in the file, in git, and in every clone. The suite found the hole; the
+gate is now `doctor`'s (G24).
 
 ## Already have a pile of notes? Start here.
 

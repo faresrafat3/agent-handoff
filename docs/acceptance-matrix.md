@@ -31,6 +31,8 @@ is removed, or it is not a gate.
 | G21 | `adopt` does not follow a symlink out of the tree | `CLOSED` | `test_adopt_does_not_follow_symlinks_out_of_the_tree` |
 | G22 | `adopt` classifies a vague next action as vague, not merely as weak | `CLOSED` | `test_vague_next_action_is_classified_precisely` |
 | G23 | `adopt` scans no more files than `--limit` | `CLOSED` | `test_scan_is_bounded_by_limit` |
+| G24 | A record carrying a credential is refused, not merely redacted on the way out | `CLOSED` | conformance `C08` + `test_doctor_refuses_a_handoff_carrying_a_credential` |
+| G25 | The published conformance suite passes against this implementation | `CLOSED` | `test_reference_implementation_conforms` |
 
 ## Deferred, and why
 

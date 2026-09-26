@@ -77,6 +77,7 @@ tells you the record is stale — because the claim is checkable, it is checked.
 | `agent-handoff doctor --strict` | **read-only** integrity report. 0 exit on clean, non-zero on any problem |
 | `agent-handoff status` | what state every task is in |
 | `agent-handoff context <T-0001>` | builds a **bounded, redacted, hash-stamped** context pack for a fresh session |
+| `agent-handoff adopt` | **read-only scan of the markdown notes you already have** — finds the hollow sections, vague next actions, dead commits, and leaked credentials in your existing pile |
 | `agent-handoff close <T-0001> --dry-run` | the checks to run *before* you call a task done |
 | `skills/handoff/SKILL.md` | drop into Claude Code / Cursor / any agent so it writes conforming handoffs on its own |
 
@@ -105,7 +106,7 @@ agent-handoff context T-0001   # you paste the generated pack into a fresh sessi
 
 ```sh
 $ python3 -m unittest discover -s tests
-Ran 67 tests
+Ran 70 tests
 OK
 ```
 
@@ -119,6 +120,33 @@ independent-sections check were each added in response to a real hollow handoff
 getting through.
 
 ---
+
+## Already have a pile of notes? Start here.
+
+Most people who hit this problem already have 400 lines of hand-maintained
+markdown and no way to tell which half of it is still true. `adopt` reads them
+and tells you. It **never writes, moves, or deletes anything.**
+
+```sh
+$ agent-handoff adopt
+{
+  "ok": true,
+  "read_only": true,
+  "scanned": 214,
+  "with_findings": 37,
+  "findings_by_kind": {
+    "hollow-section": 22,
+    "vague-next-action": 9,
+    "unknown-commit": 4,
+    "secret-pattern": 2
+  },
+  ...
+}
+```
+
+Every finding carries a `fix`. Then decide whether you want the standard at all —
+some people are better off with a wiki, and the report says which kind of pile
+you have. Non-zero exit when something is wrong, so it works in CI.
 
 ## See it work
 

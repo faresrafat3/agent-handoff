@@ -27,6 +27,10 @@ is removed, or it is not a gate.
 | G17 | Monorepo package scopes match the real manifests | `CLOSED` | `package_scope_errors` |
 | G18 | Scope graph has no unknown, duplicate, or cyclic edges | `CLOSED` | `scope_graph_errors` |
 | G19 | Ledger `fail` rows contradict a `pass` state | `CLOSED` | `check_doctor` |
+| G20 | `adopt` writes nothing, anywhere | `CLOSED` | `test_adopt_is_read_only_and_creates_nothing` |
+| G21 | `adopt` does not follow a symlink out of the tree | `CLOSED` | `test_adopt_does_not_follow_symlinks_out_of_the_tree` |
+| G22 | `adopt` classifies a vague next action as vague, not merely as weak | `CLOSED` | `test_vague_next_action_is_classified_precisely` |
+| G23 | `adopt` scans no more files than `--limit` | `CLOSED` | `test_scan_is_bounded_by_limit` |
 
 ## Deferred, and why
 

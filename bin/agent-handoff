@@ -1512,8 +1512,163 @@ def close(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+VAGUE_HEADING_RE = re.compile(
+    r"^#{1,6}\s*(?:current status|status|next steps?|next action|what'?s next|"
+    r"remaining|remaining work|to do|todo|todos|notes?|summary|progress|"
+    r"context|background|updates?|follow[- ]?ups?|open questions?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+GIT_HEAD_RE = re.compile(r"\b(?:git[_ ]?head|head|commit|sha|revision)\b[^\n]{0,40}?\b([0-9a-f]{7,40})\b", re.IGNORECASE)
+NEXT_ACTION_RE = re.compile(
+    r"^#{1,6}\s*(?:exact next action|next action|next step|next steps|what'?s next|"
+    r"immediate next step|to do|action items?)\s*$(.*?)(?=^#{1,6}\s|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+INERT_LINE_RE = re.compile(r"^(?:[-*]\s*)?(?:tbd|todo|n/?a|none|null|nothing|-|\.|\?)\s*$", re.IGNORECASE)
+NEXT_ACTION_FILLER = VAGUE_NEXT_ACTIONS | {
+    "keep going", "keep working", "keep at it", "carry on from here",
+    "continue where we left off", "continue where we left", "resume",
+    "work on it", "make it work", "finish the task", "finish it",
+}
+SKIP_DIRS = {
+    "node_modules", ".git", ".venv", "venv", "dist", "build", "__pycache__",
+    ".agent-workspace", "target", ".next", ".cache", "vendor", ".mypy_cache",
+}
+
+
+def _iter_candidate_files(root: Path, limit: int) -> list[Path]:
+    """Markdown files that plausibly carry session state, newest-looking first.
+
+    Read-only. Symlinks and anything outside `root` are skipped rather than
+    followed, so a scan cannot be turned into a read of the wider filesystem.
+    """
+    found: list[Path] = []
+    for path in sorted(root.rglob("*.md")):
+        if len(found) >= limit:
+            break
+        if any(part in SKIP_DIRS or part.startswith(".") and part != "." for part in path.parts):
+            continue
+        if path.is_symlink():
+            continue
+        try:
+            path.resolve().relative_to(root)
+        except ValueError:
+            continue
+        found.append(path)
+    return found
+
+
+def _scan_one(path: Path, root: Path, known_commits) -> dict[str, object]:
+    """Classify what is wrong with one markdown file. Read-only, no model."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        return {"path": str(path.relative_to(root)), "readable": False, "error": str(error)}
+
+    findings: list[dict[str, str]] = []
+    words = len(re.findall(r"[A-Za-z][A-Za-z'-]+", raw))
+
+    for match in VAGUE_HEADING_RE.finditer(raw):
+        heading = match.group(0).strip("# ").strip()
+        body = raw[match.end():]
+        body = re.split(r"^#{1,6}\s", body, maxsplit=1, flags=re.MULTILINE)[0]
+        substantive = [line for line in body.splitlines() if line.strip() and not INERT_LINE_RE.match(line.strip())]
+        if not substantive:
+            findings.append({
+                "kind": "hollow-section",
+                "detail": f"heading '{heading}' has no content under it",
+                "fix": "add the decision, path, or result, or delete the heading",
+            })
+
+    for match in NEXT_ACTION_RE.finditer(raw):
+        value = " ".join(match.group(1).split()).strip().lower().strip(".:-*_# ")
+        if not value or value in NEXT_ACTION_FILLER or INERT_LINE_RE.match(value):
+            findings.append({
+                "kind": "vague-next-action",
+                "detail": f"next action reads '{value[:60] or '(empty)'}' and names nothing runnable",
+                "fix": "name a path, command, id, or the check that proves it is done",
+            })
+        elif not is_actionable(match.group(1)):
+            findings.append({
+                "kind": "weak-next-action",
+                "detail": "next action names no path, command, id, or verification step",
+                "fix": "add the file, the command, or the test that closes it",
+            })
+
+    for match in GIT_HEAD_RE.finditer(raw):
+        sha = match.group(1)
+        if not git_commit_known(root, sha):
+            findings.append({
+                "kind": "unknown-commit",
+                "detail": f"references commit {sha[:12]}, which is not in this repository",
+                "fix": "re-record it from `git rev-parse HEAD`, or mark the file as a historical note",
+            })
+
+    if re.search(r"(?i)\b(?:TODO|FIXME|XXX)\b", raw) and words > 40:
+        findings.append({
+            "kind": "open-markers",
+            "detail": "contains TODO/FIXME/XXX markers next to substantive content",
+            "fix": "resolve them or move them into a task with a real owner",
+        })
+
+    if SECRET_RE.search(raw):
+        findings.append({
+            "kind": "secret-pattern",
+            "detail": "matches a credential pattern",
+            "fix": "remove the value; a context pack redacts known patterns, but the file still has it",
+        })
+
+    return {
+        "path": str(path.relative_to(root)),
+        "readable": True,
+        "bytes": len(raw.encode("utf-8")),
+        "words": words,
+        "looks_like_state": bool(VAGUE_HEADING_RE.search(raw) or NEXT_ACTION_RE.search(raw) or GIT_HEAD_RE.search(raw)),
+        "findings": findings,
+    }
+
+
+def adopt(args: argparse.Namespace) -> int:
+    """Report on a markdown pile that already exists. Never writes."""
+    root = Path(args.root or ".").expanduser().resolve()
+    if not root.is_dir():
+        print(json.dumps({"ok": False, "error": f"not a directory: {root}"}))
+        return 1
+
+    files = _iter_candidate_files(root, args.limit)
+    reports = [_scan_one(path, root, None) for path in files]
+    stateful = [r for r in reports if r.get("looks_like_state")]
+    with_findings = [r for r in reports if r.get("findings")]
+
+    by_kind: dict[str, int] = {}
+    for report in with_findings:
+        for finding in report["findings"]:
+            by_kind[finding["kind"]] = by_kind.get(finding["kind"], 0) + 1
+
+    already = (root / ".agent-workspace").exists()
+    print(json.dumps({
+        "ok": True,
+        "read_only": True,
+        "root": str(root),
+        "scanned": len(reports),
+        "state_bearing": len(stateful),
+        "with_findings": len(with_findings),
+        "findings_by_kind": dict(sorted(by_kind.items(), key=lambda kv: -kv[1])),
+        "files": sorted(with_findings, key=lambda r: -len(r["findings"]))[: args.show],
+        "truncated": max(0, len(with_findings) - args.show),
+        "workspace_exists": already,
+        "next": (
+            "review the findings above, then `init` to create the standard alongside your existing notes"
+            if not already
+            else "`.agent-workspace/` already exists; these findings are about your other notes"
+        ),
+    }, indent=2))
+    return 0 if not with_findings else 1
+
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="continuum-workspace", description="Workspace Continuity Standard helper")
+    parser = argparse.ArgumentParser(prog="agent-handoff", description="Workspace Continuity Standard helper")
     parser.add_argument("--root", default=".", help="workspace root (default: current directory)")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init", help="create a minimal/full workspace without overwriting")
@@ -1529,6 +1684,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("context", help="materialize a bounded context pack")
     p.add_argument("task_id")
     p.set_defaults(func=context)
+    p = sub.add_parser("adopt", help="read-only scan of markdown notes you already have")
+    p.add_argument("--limit", type=int, default=400, help="max files to scan (default 400)")
+    p.add_argument("--show", type=int, default=20, help="max files to list in the report")
+    p.set_defaults(func=adopt)
     p = sub.add_parser("close", help="dry-run close checks")
     p.add_argument("task_id")
     p.add_argument("--dry-run", action="store_true")

@@ -134,10 +134,11 @@ runs:
         TARGET: ${{ inputs.path }}
         FAILON: ${{ inputs.fail-on }}
         REPORT: ${{ runner.temp }}/report.json
+        VERDICT_ENV: ${{ runner.temp }}/verdict.env
       run: |
         set -euo pipefail
-        python3 - "$MODE" "$FAILON" "$REPORT" >> "$GITHUB_OUTPUT" <<'PY'
-        import json, sys, unicodedata
+        python3 - "$MODE" "$FAILON" "$REPORT" <<'PY'
+        import json, os, sys, unicodedata
         mode, failon, path = sys.argv[1], sys.argv[2], sys.argv[3]
 
         def note(kind, message):
@@ -154,17 +155,20 @@ runs:
             data = json.load(open(path))
         except Exception as error:
             note("error", f"gate produced no JSON report: {error}")
-            print("verdict=error")
-            print("count=0")
+            emit("error", 0)
+            out.close()
             raise SystemExit(1)
 
+        out = open(os.environ["VERDICT_ENV"], "w")
+
         def emit(verdict, count):
-            print(f"verdict={verdict}")
-            print(f"count={count}")
+            out.write(f"verdict={verdict}\ncount={count}\n")
+            out.flush()
 
         if mode == "conformance":
             total, passed = data["total"], data["passed"]
             emit("pass" if data["conforms"] else "fail", total - passed)
+            out.close()
             if data["conforms"]:
                 note("notice", f"conformance {passed}/{total} - the standard is met")
             else:
@@ -177,6 +181,7 @@ runs:
                 for kind, n in sorted(data.get("findings_by_kind", {}).items(), key=lambda kv: -kv[1]):
                     note("warning", f"{n} x {kind}")
             emit("pass" if count == 0 else "fail", count)
+            out.close()
             raise SystemExit(0 if count == 0 or failon == "never" else 1)
 
         errors = data.get("errors", [])
@@ -187,8 +192,17 @@ runs:
         for message in warnings:
             note("warning", message.splitlines()[0])
         emit("pass" if count == 0 else "fail", count)
+        out.close()
         raise SystemExit(0 if count == 0 or failon == "never" else 1)
         PY
+
+        # The verdict goes to the step outputs; the annotations went to the log.
+        # Both cannot share stdout: `::` commands written to $GITHUB_OUTPUT are
+        # parsed as key=value pairs and the step fails with "Unable to process
+        # file command 'output'". So the script separates them.
+        if [ -s "$RUNNER_TEMP/verdict.env" ]; then
+          cat "$RUNNER_TEMP/verdict.env" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Summary
       if: always()

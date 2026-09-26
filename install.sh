@@ -43,6 +43,19 @@ else
   ok "created .agent-workspace/"
 fi
 
+# Vendor the tool into the workspace. The standard promises a project can keep
+# working after this repository is gone, which is only true if the tool travels
+# with the project. The action's `vendor` input does the same thing; doing it
+# here means a manual install is not a second-class installation.
+mkdir -p .agent-workspace/bin
+if [ -f .agent-workspace/bin/agent-handoff ] && cmp -s "$CLI" .agent-workspace/bin/agent-handoff; then
+  ok "tool already vendored at .agent-workspace/bin/agent-handoff"
+else
+  cp "$CLI" .agent-workspace/bin/agent-handoff
+  chmod +x .agent-workspace/bin/agent-handoff
+  ok "vendored tool -> .agent-workspace/bin/agent-handoff (runs with no network, no deps)"
+fi
+
 # The CLI validates every record against JSON Schema, so a workspace without
 # schemas is a broken workspace. `init` copies them out of this repo's own
 # self-hosted .agent-workspace/schema/. Verify rather than assume.
@@ -99,7 +112,12 @@ python3 -B -m unittest discover -s "$SOURCE/tests" >/dev/null 2>&1 \
 
 cat <<'NEXT'
 
+the tool now lives in your project
+  .agent-workspace/bin/agent-handoff     <- yours; survives this repo
+
 next
+  0. check what is already hollow in your notes (read-only, writes nothing):
+       python3 .agent-workspace/bin/agent-handoff adopt
   1. tell your agent about the handoff format:
        "read skills/handoff/SKILL.md and follow it when you finish a unit of work"
   2. at the end of a work session:

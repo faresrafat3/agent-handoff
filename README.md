@@ -120,6 +120,18 @@ getting through.
 
 ---
 
+## See it work
+
+```sh
+./demo/demo.sh
+```
+
+A deterministic terminal demo: it writes the hollow handoff everyone actually
+writes, shows the doctor rejecting all sixteen ways it fails, supersedes it with
+a real one, and builds the context pack. Every claim the demo prints is asserted
+in the script — if the tool's behaviour changes, the demo fails rather than
+lying. No network, no API key, same output every run.
+
 ## Honest limits
 
 - It does **not** run your agent, schedule anything, or checkpoint a workflow. For durable execution use LangGraph, Temporal, OpenAI Agents SDK, or Google ADK. This sits one layer above them.

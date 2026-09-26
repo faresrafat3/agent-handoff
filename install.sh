@@ -64,26 +64,28 @@ fi
 # --------------------------------------------------------- harness-agnostic
 # The skill is a single markdown file. Copy it wherever your agent reads
 # skills from; nothing here is required for the CLI to work.
+# A skill is a directory containing SKILL.md for Claude Code and OpenCode, but
+# a flat markdown file for Cursor rules. Getting this wrong installs a file
+# where a directory is expected and the skill silently never loads.
 COPIED=0
-for dest in \
-  "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/handoff}" \
-  "$HOME/.cursor/rules/handoff.md" \
-  "$HOME/.config/opencode/skills/handoff"
-do
+install_skill() {           # $1 = destination SKILL.md path
+  local dest="$1"
   case "$dest" in
     "$HOME"/*) ;;
-    *) continue ;;   # never write outside the user's home
+    *) return 0 ;;          # never write outside the user's home
   esac
-  if [ -e "$dest" ]; then
-    continue
-  fi
-  mkdir -p "$(dirname "$dest")" 2>/dev/null || continue
-  if cp "$SKILL_SRC" "$dest" 2>/dev/null; then
-    ok "installed skill -> ${dest/#$HOME/\$HOME}"
-    COPIED=$((COPIED + 1))
-  fi
-done
-[ "$COPIED" -gt 0 ] || warn "no skill directory created (all existed or unwritable) — the CLI still works standalone"
+  [ -e "$dest" ] && return 0
+  mkdir -p "$(dirname "$dest")" 2>/dev/null || return 0
+  cp "$SKILL_SRC" "$dest" 2>/dev/null || return 0
+  ok "installed skill -> ${dest/#$HOME/\$HOME}"
+  COPIED=$((COPIED + 1))
+}
+
+install_skill "$HOME/.claude/skills/handoff/SKILL.md"
+install_skill "$HOME/.config/opencode/skills/handoff/SKILL.md"
+install_skill "$HOME/.cursor/rules/handoff.md"
+
+[ "$COPIED" -gt 0 ] || warn "no skill installed (all present or unwritable) — the CLI still works standalone"
 
 # ------------------------------------------------------------------ verify
 printf '\n'

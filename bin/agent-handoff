@@ -2054,6 +2054,22 @@ def conformance(args: argparse.Namespace) -> int:
     and the tool is the thing under test.
     """
     root = Path(args.root or ".").expanduser().resolve()
+
+    # The suite builds its fixtures from this repository's own schemas and
+    # workspace. A relocated copy — a vendored tool, a temp dir, an extracted
+    # archive — has neither, and would report a partial result as if it were a
+    # real one. Refuse instead. A suite that quietly reports 8/10 because it
+    # could not find its fixtures is worse than no suite.
+    here = Path(__file__).resolve().parent.parent
+    for required, label in [(here / "schemas", "schemas/"), (here / ".agent-workspace" / "schema", ".agent-workspace/schema/")]:
+        if not required.is_dir():
+            print(json.dumps({
+                "ok": False,
+                "error": f"conformance needs {label} beside the tool; not found at {required}",
+                "hint": "run it from inside the agent-handoff repository, or from a checkout that includes the schemas",
+            }, indent=2))
+            return 1
+
     work = Path(tempfile.mkdtemp(prefix="conformance-"))
     results = []
     try:

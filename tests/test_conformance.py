@@ -58,6 +58,26 @@ class ConformanceSuiteTests(unittest.TestCase):
         after = set(Path(tempfile.gettempdir()).glob("conformance-*"))
         self.assertEqual(before, after, "conformance must clean up its sandbox")
 
+    def test_conformance_refuses_to_run_without_its_fixtures(self):
+        """A relocated tool must fail loudly, not report a partial score.
+
+        The suite builds fixtures from this repository's schemas. A copy in a
+        temp dir has none, and would report 8/10 as though two cases had failed
+        on merit. That is the worst possible failure: a number that looks like
+        a verdict and is actually a missing file.
+        """
+        import shutil
+        with tempfile.TemporaryDirectory() as temp:
+            copy = Path(temp) / "agent-handoff"
+            shutil.copyfile(CLI, copy)
+            result = subprocess.run([sys.executable, "-B", str(copy), "conformance", "--json"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            data = json.loads(result.stdout)
+            self.assertFalse(data["ok"])
+            self.assertIn("schemas", data["error"])
+            self.assertNotIn("results", data, "must not emit a partial score")
+
     def test_conformance_is_deterministic(self):
         first = run("conformance", "--json").stdout
         second = run("conformance", "--json").stdout

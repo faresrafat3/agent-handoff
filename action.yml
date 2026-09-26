@@ -46,18 +46,19 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Fetch agent-handoff
+    - name: Locate agent-handoff
       shell: bash
       run: |
         set -euo pipefail
-        TOOL_DIR="$RUNNER_TEMP/agent-handoff"
-        mkdir -p "$TOOL_DIR"
-        # The tool is one file with no dependencies. Pull it from the checked-out
-        # repository so the action tests the tree it ships with, not a release
-        # artifact that could drift from the source.
-        cp "$GITHUB_ACTION_PATH/bin/agent-handoff" "$TOOL_DIR/agent-handoff"
-        chmod +x "$TOOL_DIR/agent-handoff"
-        echo "TOOL=$TOOL_DIR/agent-handoff" >> "$GITHUB_ENV"
+        # Run the tool where it lives, NOT from a copy in the runner temp dir.
+        # `conformance` builds its fixtures from `schemas/` and
+        # `.agent-workspace/`, so a relocated copy has no schemas and the two
+        # accept-cases fail. Copying it out of its own tree breaks exactly the
+        # mode that is supposed to certify it.
+        TOOL="$GITHUB_ACTION_PATH/bin/agent-handoff"
+        [ -f "$TOOL" ] || { echo "::error::action.yml is not beside bin/agent-handoff"; exit 1; }
+        echo "TOOL=$TOOL" >> "$GITHUB_ENV"
+        echo "using $TOOL"
 
     - name: Report Python version
       shell: bash

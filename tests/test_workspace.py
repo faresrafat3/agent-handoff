@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -126,13 +127,62 @@ class WorkspaceCliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("single line", result.stdout)
 
-    def test_strict_schema_validation_fails_closed_without_site_packages(self):
-        with tempfile.TemporaryDirectory() as temp:
+    def test_validation_works_with_site_packages_unavailable(self):
+        """The dependency-free promise, actually exercised.
+
+        This used to assert the opposite: that the tool fails closed when
+        `jsonschema` is missing. That test is deleted, not weakened. The
+        standard now promises the tool has no runtime dependency at all, so
+        there is nothing to fail closed about — the stronger property is that
+        it validates correctly with every third-party package blocked.
+
+        PyYAML and jsonschema are importable on a developer machine, which is
+        exactly how a missing dependency hides. This blocks them by path.
+        """
+        with tempfile.TemporaryDirectory() as temp, tempfile.TemporaryDirectory() as blocked:
             root = Path(temp)
             self.assertEqual(init(root).returncode, 0)
-            result = subprocess.run([sys.executable, "-S", str(CLI), "--root", str(root), "doctor", "--strict"], text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("schema validation unavailable", result.stdout)
+            task = root / ".agent-workspace" / "tasks" / "T-0001-demo"
+            task.mkdir(parents=True, exist_ok=True)
+            (task / "task.yaml").write_text(
+                "schema_version: 1\nkind: Task\nid: T-0001\nslug: demo\n"
+                "title: Demo\ntype: chore\nstatus: in_progress\npriority: p2\n"
+                "primary_scope: root\naffected_scopes: [root]\ndepends_on: []\n"
+                "related:\n  research: []\n  decisions: []\n", encoding="utf-8",
+            )
+            blocker = Path(blocked) / "sitecustomize.py"
+            blocker.write_text(
+                "import sys\n"
+                "class _Block:\n"
+                "    def find_module(self, name, path=None):\n"
+                "        return self if name.split('.')[0] in ('yaml', 'jsonschema') else None\n"
+                "    def load_module(self, name):\n"
+                "        raise ImportError('blocked by test: ' + name)\n"
+                "sys.meta_path.insert(0, _Block())\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ, PYTHONPATH=blocked)
+            # a conforming record still validates
+            ok = subprocess.run(
+                [sys.executable, "-B", str(CLI), "--root", str(root), "doctor"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertNotIn("Traceback", ok.stderr, ok.stderr)
+            self.assertNotIn("schema validation unavailable", ok.stdout)
+            # and a malformed one is still rejected, so the validator is really
+            # running rather than quietly skipped
+            (task / "task.yaml").write_text(
+                "schema_version: 1\nkind: Task\nid: T-0001\nslug: demo\n"
+                "title: Demo\ntype: chore\nstatus: NOT_A_STATUS\npriority: p2\n"
+                "primary_scope: root\naffected_scopes: [root]\ndepends_on: []\n"
+                "related:\n  research: []\n  decisions: []\n", encoding="utf-8",
+            )
+            bad = subprocess.run(
+                [sys.executable, "-B", str(CLI), "--root", str(root), "doctor"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(bad.returncode, 1)
+            self.assertIn("NOT_A_STATUS", bad.stdout)
 
     def test_context_redacts_secrets_and_hashes_emitted_content(self):
         with tempfile.TemporaryDirectory() as temp:

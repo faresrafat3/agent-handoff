@@ -33,6 +33,9 @@ is removed, or it is not a gate.
 | G23 | `adopt` scans no more files than `--limit` | `CLOSED` | `test_scan_is_bounded_by_limit` |
 | G24 | A record carrying a credential is refused, not merely redacted on the way out | `CLOSED` | conformance `C08` + `test_doctor_refuses_a_handoff_carrying_a_credential` |
 | G25 | The published conformance suite passes against this implementation | `CLOSED` | `test_reference_implementation_conforms` |
+| G26 | The tool imports no third-party package, and the suite passes with none importable | `CLOSED` | `test_validation_works_with_site_packages_unavailable` + the `python3 -S` CI job |
+| G27 | The built-in schema validator agrees with a reference implementation on every shipped schema | `CLOSED` | `test_validator_agrees_with_jsonschema_on_every_shipped_schema` |
+| G28 | The built-in YAML loader agrees with a reference implementation on every shipped record | `CLOSED` | `test_loader_agrees_with_pyyaml_on_every_shipped_record` |
 
 ## Deferred, and why
 

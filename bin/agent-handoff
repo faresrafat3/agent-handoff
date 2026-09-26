@@ -512,15 +512,273 @@ def frontmatter(path: Path) -> str | None:
     return raw[4:end] if end >= 0 else None
 
 
-def schema_validation(root: Path, strict: bool = False) -> tuple[list[str], list[str]]:
-    """Validate canonical YAML records when optional local validators exist."""
-    try:
-        import yaml
-        import jsonschema
-    except Exception as error:  # pragma: no cover - exercised only in minimal installs
-        message = f"schema validation unavailable ({error.__class__.__name__}); strict mode fails closed"
-        return ([message], []) if strict else ([], [message])
+# ---------------------------------------------------------------------------
+# Dependency-free schema validation
+# ---------------------------------------------------------------------------
+# This file has no runtime dependency, and that is a promise the standard makes
+# in writing: the tool must be vendored into a project and still run years later
+# on a machine nobody controls. A tool that needs `pyyaml` + `jsonschema` breaks
+# that promise on the first clean checkout — which is exactly what GitHub's
+# runners did, and exactly what the first CI run caught.
+#
+# So the two things this file used to import are implemented here, for the
+# subset the standard's own schemas actually use. The subset is closed and
+# enumerated in docs/SPEC.md; anything outside it fails LOUD rather than being
+# skipped, because a validator that silently ignores a keyword it does not
+# understand is worse than no validator.
+#
+# `tests/test_dependency_free.py` differentially tests both of these against
+# PyYAML and jsonschema whenever those happen to be importable, so equivalence
+# is measured rather than asserted.
 
+
+def _yaml_strip_comment(line: str) -> str:
+    out, quote = [], None
+    for index, char in enumerate(line):
+        if quote:
+            out.append(char)
+            if char == quote and line[index - 1:index] != "\\":
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+            out.append(char)
+            continue
+        if char == "#" and (index == 0 or line[index - 1] in " \t"):
+            break
+        out.append(char)
+    return "".join(out).rstrip()
+
+
+def _yaml_scalar(raw: str):
+    text = raw.strip()
+    if not text:
+        return ""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        body = text[1:-1]
+        return body.replace("''", "'") if text[0] == "'" else body
+    lowered = text.lower()
+    if lowered in ("null", "~"):
+        return None
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if re.fullmatch(r"[+-]?[0-9]+", text):
+        return int(text)
+    if re.fullmatch(r"[+-]?(?:[0-9]*\.[0-9]+|[0-9]+\.[0-9]*)(?:[eE][+-]?[0-9]+)?", text):
+        return float(text)
+    return text
+
+
+def _yaml_flow(text: str):
+    """Parse a flow collection: [a, b] or {k: v, k2: v2}."""
+    text = text.strip()
+    if text.startswith("["):
+        return [_yaml_flow(part) for part in _yaml_split(text[1:-1])] if text[1:-1].strip() else []
+    if text.startswith("{"):
+        result = {}
+        for part in _yaml_split(text[1:-1]):
+            if not part.strip():
+                continue
+            key, _, value = part.partition(":")
+            result[_yaml_scalar(key)] = _yaml_flow(value) if value.strip().startswith(("[", "{")) else _yaml_scalar(value)
+        return result
+    return _yaml_scalar(text)
+
+
+def _yaml_split(body: str) -> list[str]:
+    parts, depth, quote, current = [], 0, None, []
+    for char in body:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+            current.append(char)
+            continue
+        if char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    if "".join(current).strip():
+        parts.append("".join(current))
+    return parts
+
+
+def _yaml_lines(raw: str) -> list[tuple[int, str]]:
+    out = []
+    for line in raw.splitlines():
+        stripped = _yaml_strip_comment(line)
+        if not stripped.strip():
+            continue
+        if stripped.strip() in ("---", "..."):
+            continue
+        out.append((len(stripped) - len(stripped.lstrip(" ")), stripped.strip()))
+    return out
+
+
+def _yaml_block(lines: list[tuple[int, str]], start: int, indent: int):
+    """Parse one block at `indent`. Returns (value, next_index)."""
+    if start >= len(lines):
+        return None, start
+    if lines[start][1].startswith("- "):
+        items = []
+        index = start
+        while index < len(lines) and lines[index][0] == indent and lines[index][1].startswith("- "):
+            body = lines[index][1][2:].strip()
+            child_indent = indent + 2
+            if ":" in body and not body.startswith(("[", "{", '"', "'")):
+                synthetic = [(child_indent, body)]
+                index += 1
+                while index < len(lines) and lines[index][0] > indent:
+                    synthetic.append(lines[index])
+                    index += 1
+                value, _ = _yaml_block(synthetic, 0, child_indent)
+                items.append(value)
+                continue
+            items.append(_yaml_flow(body) if body.startswith(("[", "{")) else _yaml_scalar(body))
+            index += 1
+        return items, index
+
+    mapping: dict = {}
+    index = start
+    while index < len(lines) and lines[index][0] == indent:
+        line = lines[index][1]
+        if line.startswith("- "):
+            break
+        key, _, value = line.partition(":")
+        key = _yaml_scalar(key)
+        value = value.strip()
+        if value:
+            mapping[key] = _yaml_flow(value) if value[0] in "[{" else _yaml_scalar(value)
+            index += 1
+            continue
+        if index + 1 < len(lines) and lines[index + 1][0] > indent:
+            child, index = _yaml_block(lines, index + 1, lines[index + 1][0])
+            mapping[key] = child
+        else:
+            mapping[key] = None
+            index += 1
+    return mapping, index
+
+
+def yaml_load(raw: str):
+    """Bounded YAML subset loader. See the note above for what it covers."""
+    lines = _yaml_lines(raw)
+    if not lines:
+        return None
+    value, _ = _yaml_block(lines, 0, lines[0][0])
+    return value
+
+
+# JSON Schema validation keywords this standard uses. Anything else in a schema
+# is either an annotation or a property name, and is deliberately ignored.
+_SUPPORTED_KEYWORDS = {
+    "type", "required", "properties", "additionalProperties", "enum", "const",
+    "pattern", "minLength", "minItems", "minProperties", "minimum", "items",
+    "format",
+}
+
+_TYPE_CHECKS = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "array": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+    "null": lambda v: v is None,
+}
+
+_FORMATS = {"uri": re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$")}
+
+
+def _schema_errors(schema: dict, instance, pointer: str = "") -> list[str]:
+    """Validate against the closed keyword subset. Returns human-readable errors."""
+    errors: list[str] = []
+    if not isinstance(schema, dict):
+        return errors
+    unknown = set(schema) - _SUPPORTED_KEYWORDS - {
+        "$schema", "$id", "title", "description", "examples", "default",
+        "$comment", "deprecated", "readOnly", "writeOnly",
+    }
+    if unknown:
+        raise ValueError(
+            f"schema uses keywords this validator does not implement: {sorted(unknown)}. "
+            f"Refusing to validate partially — implement the keyword or remove it."
+        )
+
+    expected = schema.get("type")
+    if expected is not None:
+        options = expected if isinstance(expected, list) else [expected]
+        if not any(_TYPE_CHECKS.get(name, lambda _v: True)(instance) for name in options):
+            errors.append(f"{pointer or 'instance'}: expected type {' or '.join(options)}, got {type(instance).__name__}")
+            return errors
+
+    if "const" in schema and instance != schema["const"]:
+        errors.append(f"{pointer or 'instance'}: expected const {schema['const']!r}, got {instance!r}")
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{pointer or 'instance'}: {instance!r} is not one of {schema['enum']}")
+
+    if isinstance(instance, str):
+        if "minLength" in schema and len(instance) < schema["minLength"]:
+            errors.append(f"{pointer or 'instance'}: shorter than minLength {schema['minLength']}")
+        if "pattern" in schema and not re.search(schema["pattern"], instance):
+            errors.append(f"{pointer or 'instance'}: does not match pattern {schema['pattern']!r}")
+        fmt = schema.get("format")
+        if fmt in _FORMATS and not _FORMATS[fmt].match(instance):
+            errors.append(f"{pointer or 'instance'}: is not a valid {fmt}")
+
+    if isinstance(instance, (int, float)) and not isinstance(instance, bool):
+        if "minimum" in schema and instance < schema["minimum"]:
+            errors.append(f"{pointer or 'instance'}: below minimum {schema['minimum']}")
+
+    if isinstance(instance, list):
+        if "minItems" in schema and len(instance) < schema["minItems"]:
+            errors.append(f"{pointer or 'instance'}: fewer than minItems {schema['minItems']}")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(instance):
+                errors.extend(_schema_errors(item_schema, item, f"{pointer}[{index}]"))
+
+    if isinstance(instance, dict):
+        for name in schema.get("required", []):
+            if name not in instance:
+                errors.append(f"{pointer or 'instance'}: '{name}' is a required property")
+        if "minProperties" in schema and len(instance) < schema["minProperties"]:
+            errors.append(f"{pointer or 'instance'}: fewer than minProperties {schema['minProperties']}")
+        properties = schema.get("properties", {})
+        for name, sub_schema in properties.items():
+            if name in instance:
+                errors.extend(_schema_errors(sub_schema, instance[name], f"{pointer}.{name}" if pointer else name))
+        # `additionalProperties` is either `false` (no undeclared keys) or a
+        # schema every undeclared key must satisfy. Handling only `false` leaves
+        # those keys unvalidated, which is how a draft schema and a strict one
+        # quietly disagree.
+        additional = schema.get("additionalProperties")
+        if additional is False:
+            for name in instance:
+                if name not in properties:
+                    errors.append(f"{pointer or 'instance'}: additional property '{name}' is not allowed")
+        elif isinstance(additional, dict):
+            for name, value in instance.items():
+                if name in properties:
+                    continue
+                errors.extend(
+                    _schema_errors(additional, value, f"{pointer}.{name}" if pointer else name)
+                )
+    return errors
+
+
+def schema_validation(root: Path, strict: bool = False) -> tuple[list[str], list[str]]:
+    """Validate canonical YAML records against their JSON Schemas."""
     schema_dir = root / ".agent-workspace" / "schema"
     schema_paths = {
         "WorkspaceManifest": schema_dir / "workspace.schema.json",
@@ -590,7 +848,7 @@ def schema_validation(root: Path, strict: bool = False) -> tuple[list[str], list
             errors.append(f"missing YAML frontmatter: {path.relative_to(root)}")
             continue
         try:
-            value = normalize(yaml.safe_load(raw))
+            value = normalize(yaml_load(raw))
             if kind == "SourceLedger":
                 from urllib.parse import urlparse
                 ledger_path = path.parent
@@ -616,22 +874,21 @@ def schema_validation(root: Path, strict: bool = False) -> tuple[list[str], list
                             raise ValueError(f"source path escapes workspace: {source.get('id')} -> {local}") from None
                         if (ledger_path / candidate).is_symlink():
                             raise ValueError(f"source path is a symlink: {source.get('id')} -> {local}")
-            validator = jsonschema.Draft202012Validator(schemas[kind], format_checker=jsonschema.FormatChecker())
-            validation_errors = list(validator.iter_errors(value))
+            validation_errors = _schema_errors(schemas[kind], value)
             if validation_errors:
-                raise validation_errors[0]
+                raise ValueError(validation_errors[0])
         except Exception as error:
             errors.append(f"schema validation failed for {path.relative_to(root)}: {error}")
     if validation.exists():
         try:
-            policy = yaml.safe_load(text(validation)) or {}
+            policy = yaml_load(text(validation)) or {}
             # Scope requirements must name a scope the manifest actually
             # declares. A bare directory check would accept a phantom scope
             # whose folder happens to exist.
             declared_scopes: set[str] = set()
             manifest_path = root / ".agent-workspace" / "workspace.yaml"
             if manifest_path.exists():
-                manifest_data = yaml.safe_load(text(manifest_path)) or {}
+                manifest_data = yaml_load(text(manifest_path)) or {}
                 for entry in manifest_data.get("scopes") or []:
                     if isinstance(entry, dict) and isinstance(entry.get("id"), str):
                         declared_scopes.add(entry["id"])
@@ -778,12 +1035,10 @@ def package_scope_errors(root: Path, manifest: Path) -> list[str]:
     undeclared package, a declared package with no manifest, a duplicate
     id, a manifest outside its scope, or a dependency cycle is an error.
     """
-    try:
-        import yaml
-    except Exception:
+    if not manifest.exists():
         return []
     try:
-        data = yaml.safe_load(text(manifest)) or {}
+        data = yaml_load(text(manifest)) or {}
     except Exception as error:
         return [f"cannot parse scope graph: {error}"]
     scopes = data.get("scopes") or []
@@ -880,12 +1135,10 @@ def package_scope_errors(root: Path, manifest: Path) -> list[str]:
 
 
 def scope_graph_errors(root: Path, manifest: Path) -> list[str]:
-    try:
-        import yaml
-    except Exception:
+    if not manifest.exists():
         return []
     try:
-        data = yaml.safe_load(text(manifest)) or {}
+        data = yaml_load(text(manifest)) or {}
     except Exception as error:
         return [f"cannot parse scope graph: {error}"]
     scopes = data.get("scopes", [])

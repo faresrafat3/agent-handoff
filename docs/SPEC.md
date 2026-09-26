@@ -50,7 +50,46 @@ An implementation of this standard must not provide them, and must not claim to.
 For what to reach for instead, see a landscape comparison in the reference
 implementation's `docs/landscape.md`.
 
-### 1.4 The central constraint
+### 1.4 Zero runtime dependency, and why it is normative
+
+An implementation MUST run with **no third-party package importable**. Not
+"vendored with a lockfile" — absent.
+
+This is normative because the alternative fails silently. A validator that
+requires `pyyaml` and `jsonschema` works on the author's machine, because the
+author installed them, and fails on the first clean checkout. The reference
+implementation shipped exactly that way for a while, and the only reason it was
+caught is that CI ran on a runner where neither package existed: 31 tests failed
+with `schema validation unavailable`. A dependency-free promise that is not
+enforced in CI is a wish.
+
+A conforming implementation needs, at minimum:
+
+- **A JSON Schema validator** covering the keywords the schemas use. For this
+  standard that is thirteen: `type`, `required`, `properties`,
+  `additionalProperties` (both `false` and a schema), `enum`, `const`,
+  `pattern`, `minLength`, `minItems`, `minProperties`, `minimum`, `items`,
+  `format`.
+- **A YAML subset loader** covering block mappings, block sequences, nested
+  combinations, flow collections, quoted scalars, comments, and scalar type
+  resolution.
+
+Two rules make a hand-written implementation safe rather than dangerous:
+
+1. **An unimplemented keyword MUST fail loudly.** A validator that silently
+   ignores a keyword it does not understand certifies records it never checked.
+   Raise instead.
+2. **Equivalence MUST be measured, not asserted.** Compare the implementation
+   against a reference implementation on every shipped record and schema, and
+   publish the comparison as a test. Skip loudly when the reference is absent,
+   never silently.
+
+Note on timestamps: a bare `YYYY-MM-DD` and a `Z`-suffixed instant are
+legitimately ambiguous across parsers, and both are `type: string` in these
+schemas. An implementation MUST normalise to a string before validating, and a
+comparison against a reference MUST compare instants rather than text.
+
+### 1.5 The central constraint
 
 > **The verifier must be independent of the writer.**
 
@@ -357,7 +396,7 @@ A record that passes every gate is **NOT thereby true.**
 
 Truth is not mechanically checkable. An implementation MUST NOT claim otherwise,
 and MUST publish which of its intended gates are not yet enforced. The reference
-implementation lists 26 closed gates and 5 deliberately deferred ones in
+implementation lists 29 closed gates and 5 deliberately deferred ones in
 `docs/acceptance-matrix.md`, each deferred gate with the reason it is not
 enforced. **A published list of what your implementation cannot do is part of
 conforming.**
@@ -378,6 +417,10 @@ An implementation conforms when:
 - [ ] The list of intended-but-unenforced gates is published (§8)
 - [ ] The tool has no runtime dependency, so it can be vendored and outlive its
       author
+- [ ] The suite runs under an interpreter with no site-packages, in CI, and that
+      job fails if a third-party package turns out to be importable
+- [ ] The built-in validator and loader are compared against a reference
+      implementation on every shipped record and schema
 
 ## 10. License
 

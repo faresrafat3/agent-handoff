@@ -26,6 +26,31 @@ jobs:
       - name: Test suite
         run: python3 -B -m unittest discover -s tests -v
 
+      # The zero-dependency claim is only worth something if it is enforced.
+      # `python3 -S` skips site-packages entirely, so this job runs the whole
+      # suite with no third-party package importable at all. It is the job that
+      # would have caught the original `pyyaml` + `jsonschema` dependency, which
+      # is why it exists rather than a comment claiming there are none.
+      - name: Confirm no third-party package is even importable
+        run: |
+          set -euo pipefail
+          for pkg in yaml jsonschema; do
+            if python3 -S -c "import $pkg" 2>/dev/null; then
+              echo "::error::$pkg is importable under python3 -S; the dependency-free job below is not a real test"
+              exit 1
+            fi
+            echo "ok  $pkg absent under python3 -S"
+          done
+
+      - name: Test suite with no site-packages
+        run: python3 -S -B -m unittest discover -s tests -v
+
+      - name: The gate and the suite, with no site-packages
+        run: |
+          set -euo pipefail
+          python3 -S -B bin/agent-handoff conformance
+          python3 -S -B bin/agent-handoff doctor --strict
+
       - name: The standard on this repository
         run: python3 -B bin/agent-handoff doctor --strict
 

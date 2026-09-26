@@ -43,20 +43,23 @@ else
   ok "created .agent-workspace/"
 fi
 
-# The CLI validates records against JSON Schema, so the schemas must exist in
-# the target workspace. Ship them; never overwrite a schema the project edited.
-mkdir -p .agent-workspace/schema
-SHIPPED=0
-for s in "$SOURCE"/schemas/*.json; do
-  [ -f "$s" ] || continue
-  dest=".agent-workspace/schema/$(basename "$s")"
-  if [ -e "$dest" ]; then
-    cmp -s "$s" "$dest" || warn "kept your edited $dest (differs from shipped)"
-    continue
-  fi
-  cp "$s" "$dest" && SHIPPED=$((SHIPPED + 1))
-done
-ok "installed $SHIPPED schema(s) into .agent-workspace/schema/"
+# The CLI validates every record against JSON Schema, so a workspace without
+# schemas is a broken workspace. `init` copies them out of this repo's own
+# self-hosted .agent-workspace/schema/. Verify rather than assume.
+SCHEMA_COUNT="$(find .agent-workspace/schema -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$SCHEMA_COUNT" -ge 9 ]; then
+  ok "schemas present in .agent-workspace/schema/ ($SCHEMA_COUNT)"
+else
+  for s in "$SOURCE"/schemas/*.json; do
+    [ -f "$s" ] || continue
+    mkdir -p .agent-workspace/schema
+    cp -n "$s" ".agent-workspace/schema/$(basename "$s")" 2>/dev/null || true
+  done
+  RECOUNT="$(find .agent-workspace/schema -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$RECOUNT" -ge 9 ] \
+    && ok "schemas recovered from source tree ($RECOUNT)" \
+    || die "only $RECOUNT/9 schemas present — copy $SOURCE/schemas/*.json into .agent-workspace/schema/"
+fi
 
 # --------------------------------------------------------- harness-agnostic
 # The skill is a single markdown file. Copy it wherever your agent reads

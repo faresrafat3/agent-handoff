@@ -1,0 +1,47 @@
+name: gate
+
+# This repository uses its own standard on itself. If `doctor --strict` fails
+# here, a real invariant broke — it is not a stale test to be adjusted.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the gates read git history; a shallow clone
+                                # must be reported as shallow, not as broken
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test suite
+        run: python3 -B -m unittest discover -s tests -v
+
+      - name: The standard on this repository
+        run: python3 -B bin/agent-handoff doctor --strict
+
+      - name: Published conformance suite
+        run: python3 -B bin/agent-handoff conformance
+
+      - name: The demo asserts every claim it prints
+        run: ./demo/demo.sh
+
+      - name: Conformance suite through this action
+        uses: ./
+        with:
+          mode: conformance
+
+      - name: The action gates this repo on itself
+        uses: ./
+        with:
+          mode: doctor
+          vendor: false

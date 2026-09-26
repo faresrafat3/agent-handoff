@@ -38,6 +38,15 @@ project.
 
 ---
 
+## What it looks like
+
+Real output from `doctor --strict` on a handoff with all eleven sections
+present, no content under any of them, and `continue the work` as the next
+action. Regenerated from the tool by `demo/render_demo.py` — the image cannot
+drift from the code.
+
+![agent-handoff doctor --strict rejecting a hollow handoff with 15 findings](demo/doctor-rejects.svg)
+
 ## The problem, concretely
 
 Three ways long agent sessions break. All three are silent.
@@ -150,6 +159,26 @@ record. `context` redacted secrets on the way out, which meant the key was still
 sitting in the file, in git, and in every clone. The suite found the hole; the
 gate is now `doctor`'s (G24).
 
+## Is your setup actually verifiable? Check in 30 seconds.
+
+```sh
+python3 bin/agent-handoff adopt      # read-only, writes nothing, no model
+```
+
+```
+findings_by_kind: { hollow-section: 22, vague-next-action: 9,
+                    unknown-commit: 4, secret-pattern: 2 }
+```
+
+**If it reports zero findings, you do not need anything I sell** — that is a
+common outcome and the correct answer for a lot of teams.
+
+If it reports findings, that number is a real measurement of how much of what
+you are relying on is not true right now. Most teams clear most of it in an
+afternoon without adopting anything.
+
+Full breakdown, and what a paid fix costs: [`docs/AUDIT.md`](docs/AUDIT.md).
+
 ## Already have a pile of notes? Start here.
 
 Most people who hit this problem already have 400 lines of hand-maintained
@@ -188,6 +217,38 @@ writes, shows the doctor rejecting all sixteen ways it fails, supersedes it with
 a real one, and builds the context pack. Every claim the demo prints is asserted
 in the script — if the tool's behaviour changes, the demo fails rather than
 lying. No network, no API key, same output every run.
+
+## Gate it in CI
+
+```yaml
+- uses: faresrafat3/agent-handoff@v1
+  with:
+    mode: doctor        # or `adopt` to scan notes you already have
+    strict: 'true'
+```
+
+A handoff that goes stale then fails the build instead of misleading the next
+session until a human notices. Full example in
+[`examples/ci-consumer.yml`](examples/ci-consumer.yml).
+
+Without CI, any convention decays into decoration. That is not a criticism of
+anyone using markdown — it is a property of conventions.
+
+## The standard is published separately from this tool
+
+[`docs/SPEC.md`](docs/SPEC.md) is normative and written so that an
+implementation in any language can conform **without reading this source**. The
+conformance cases are fixed in [`bin/agent-handoff`](bin/agent-handoff) and each
+states why it exists.
+
+Building a different handoff format? Run the suite against your own output:
+
+```sh
+agent-handoff conformance
+  10/10 — CONFORMS
+```
+
+The point of a standard is that people conform to it without asking.
 
 ## Honest limits
 

@@ -1,0 +1,47 @@
+# Two ways to adopt the gate. Copy one into your own workflow.
+#
+# -- 1. You already keep handoffs with this tool -----------------------------
+#    The doctor runs in CI, so a handoff that goes stale fails the build
+#    instead of misleading the next session until a human notices.
+name: agent-reliability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  handoff-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the checkpoint gate compares against real history
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # First run: create the workspace, then commit the result.
+      #   - uses: faresrafat3/agent-handoff@v1
+      #     with: { mode: adopt }              # find what is hollow in what you have
+      #   - run: ./install.sh
+      #     working-directory: .agent-workspace
+      # After that, gate it on every change:
+      - uses: faresrafat3/agent-handoff@v1
+        with:
+          mode: doctor
+          strict: 'true'
+          vendor: 'true'        # the project keeps the tool in its own repo
+
+# -- 2. You have notes but no standard yet ------------------------------------
+#    `adopt` is read-only. It reports; it never writes. Wire it in as a
+#    non-blocking job first and read the number it prints.
+#
+#     - uses: faresrafat3/agent-handoff@v1
+#       with:
+#         mode: adopt
+#         fail-on: never

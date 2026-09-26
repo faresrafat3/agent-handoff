@@ -1,0 +1,209 @@
+name: 'agent-handoff'
+description: >-
+  Fail the build when a coding agent's handoff is hollow, its checkpoint is
+  stale, or it carries a credential. Dependency-free, no network, no model.
+author: 'Fares Rafat'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  mode:
+    description: >-
+      `doctor` checks a workspace that already uses the standard. `adopt` scans
+      existing markdown notes and reports what is hollow, stale, or leaked
+      without writing anything. `conformance` runs the published suite against
+      this implementation.
+    required: true
+    default: 'doctor'
+  path:
+    description: 'Workspace root to check.'
+    required: false
+    default: '.'
+  strict:
+    description: 'Treat warnings as errors in `doctor` mode.'
+    required: false
+    default: 'true'
+  vendor:
+    description: >-
+      Copy the tool into the workspace at .agent-workspace/bin so the project
+      keeps working without this action. The tool is a single file with no
+      dependencies, so it survives this repository disappearing.
+    required: false
+    default: 'true'
+  fail-on:
+    description: 'Findings that should fail the build: findings, errors, or never.'
+    required: false
+    default: 'findings'
+
+outputs:
+  result:
+    description: 'verdict — pass or fail, from the standard not the tool'
+  findings:
+    description: 'JSON report from the mode that ran'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch agent-handoff
+      shell: bash
+      run: |
+        set -euo pipefail
+        TOOL_DIR="$RUNNER_TEMP/agent-handoff"
+        mkdir -p "$TOOL_DIR"
+        # The tool is one file with no dependencies. Pull it from the checked-out
+        # repository so the action tests the tree it ships with, not a release
+        # artifact that could drift from the source.
+        cp "$GITHUB_ACTION_PATH/bin/agent-handoff" "$TOOL_DIR/agent-handoff"
+        chmod +x "$TOOL_DIR/agent-handoff"
+        echo "TOOL=$TOOL_DIR/agent-handoff" >> "$GITHUB_ENV"
+
+    - name: Report Python version
+      shell: bash
+      run: python3 --version
+
+    - name: Vendor the tool into the workspace
+      if: ${{ inputs.vendor == 'true' && inputs.mode == 'doctor' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.path }}/.agent-workspace/bin"
+        cp "$TOOL" "${{ inputs.path }}/.agent-workspace/bin/agent-handoff"
+        echo "Vendored to ${{ inputs.path }}/.agent-workspace/bin/agent-handoff"
+
+    - name: Run the gate
+      id: gate
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TARGET: ${{ inputs.path }}
+        STRICT: ${{ inputs.strict }}
+        FAILON: ${{ inputs.fail-on }}
+      run: |
+        set -uo pipefail
+        REPORT="$RUNNER_TEMP/report.json"
+        case "$MODE" in
+          doctor)
+            # Refusing to certify a non-workspace is correct. Dumping 25
+            # "missing path" errors at someone who has not run `init` yet is
+            # not, so say the one thing that unblocks them and point at the
+            # read-only diagnostic they can run without committing to anything.
+            if [ ! -d "$TARGET/.agent-workspace" ]; then
+              cat > "$REPORT" <<JSON
+        {
+          "ok": false,
+          "errors": [
+            "no .agent-workspace/ at $TARGET — this project does not use the standard yet"
+          ],
+          "warnings": [
+            "run the read-only scan first: agent-handoff adopt",
+            "then create the workspace: git clone https://github.com/faresrafat3/agent-handoff && cd agent-handoff && ./install.sh"
+          ],
+          "not_a_workspace": true
+        }
+        JSON
+              cat "$REPORT"
+              exit 0
+            fi
+            if [ "$STRICT" = "true" ]; then
+              python3 -B "$TOOL" --root "$TARGET" doctor --strict > "$REPORT" 2>&1 || true
+            else
+              python3 -B "$TOOL" --root "$TARGET" doctor > "$REPORT" 2>&1 || true
+            fi
+            ;;
+          adopt)
+            python3 -B "$TOOL" --root "$TARGET" adopt > "$REPORT" 2>&1 || true
+            ;;
+          conformance)
+            python3 -B "$TOOL" conformance --json > "$REPORT" 2>&1 || true
+            ;;
+          *)
+            echo "::error::unknown mode '$MODE' (expected doctor, adopt, or conformance)"
+            exit 1
+            ;;
+        esac
+        cat "$REPORT"
+
+    - name: Decide the verdict
+      id: decide
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TARGET: ${{ inputs.path }}
+        FAILON: ${{ inputs.fail-on }}
+        REPORT: ${{ runner.temp }}/report.json
+      run: |
+        set -euo pipefail
+        python3 - "$MODE" "$FAILON" "$REPORT" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        mode, failon, path = sys.argv[1], sys.argv[2], sys.argv[3]
+        try:
+            data = json.load(open(path))
+        except Exception as error:
+            print(f"::error::gate produced no JSON report: {error}")
+            print("verdict=error")
+            print("count=0")
+            raise SystemExit(1)
+
+        def emit(verdict, count):
+            print(f"verdict={verdict}")
+            print(f"count={count}")
+
+        if mode == "conformance":
+            total, passed = data["total"], data["passed"]
+            emit("pass" if data["conforms"] else "fail", total - passed)
+            if data["conforms"]:
+                print(f"::notice::conformance {passed}/{total} — the standard is met")
+            else:
+                print(f"::error::conformance {passed}/{total} — see the suite output above")
+            raise SystemExit(0 if data["conforms"] or failon == "never" else 1)
+
+        if mode == "adopt":
+            count = data.get("with_findings", 0)
+            if count:
+                for kind, n in sorted(data.get("findings_by_kind", {}).items(), key=lambda kv: -kv[1]):
+                    print(f"::warning::{n} x {kind}")
+            emit("pass" if count == 0 else "fail", count)
+            raise SystemExit(0 if count == 0 or failon == "never" else 1)
+
+        errors = data.get("errors", [])
+        warnings = data.get("warnings", [])
+        count = len(errors) if failon == "errors" else len(errors) + len(warnings)
+        for message in errors:
+            print(f"::error::{message.splitlines()[0]}")
+        for message in warnings:
+            print(f"::warning::{message.splitlines()[0]}")
+        emit("pass" if count == 0 else "fail", count)
+        raise SystemExit(0 if count == 0 or failon == "never" else 1)
+        PY
+
+    - name: Summary
+      if: always()
+      shell: bash
+      env:
+        VERDICT: ${{ steps.decide.outputs.verdict }}
+        COUNT: ${{ steps.decide.outputs.count }}
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        {
+          echo "### agent-handoff — $MODE"
+          echo ""
+          if [ "$VERDICT" = "pass" ]; then
+            echo "**pass** — the standard is met."
+          else
+            echo "**fail** — $COUNT finding(s)."
+            echo ""
+            echo "The gate is the standard, not this tool. If a finding is wrong, the"
+            echo "finding is the bug: open an issue with the record that was rejected."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+        echo "verdict=$VERDICT count=$COUNT" >> "$GITHUB_OUTPUT"
+
+    - name: Fail the build
+      if: steps.decide.outputs.verdict == 'fail'
+      shell: bash
+      run: |
+        echo "::error::agent-handoff gate failed in ${{ inputs.mode }} mode — see the summary above"
+        exit 1

@@ -137,12 +137,23 @@ runs:
       run: |
         set -euo pipefail
         python3 - "$MODE" "$FAILON" "$REPORT" >> "$GITHUB_OUTPUT" <<'PY'
-        import json, sys
+        import json, sys, unicodedata
         mode, failon, path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+        def note(kind, message):
+            # GitHub rejects a workflow command whose message contains non-ASCII:
+            # "Invalid format '::notice::...'". An em dash in a finding, or any
+            # non-English text in a record, would fail somebody's build for a
+            # reason that has nothing to do with the gate. So the message is
+            # transliterated, and the original is kept for the step summary.
+            clean = unicodedata.normalize("NFKD", str(message))
+            clean = clean.encode("ascii", "ignore").decode("ascii").strip()
+            print(f"::{kind}::{clean or '(no detail)'}")
+
         try:
             data = json.load(open(path))
         except Exception as error:
-            print(f"::error::gate produced no JSON report: {error}")
+            note("error", f"gate produced no JSON report: {error}")
             print("verdict=error")
             print("count=0")
             raise SystemExit(1)
@@ -155,16 +166,16 @@ runs:
             total, passed = data["total"], data["passed"]
             emit("pass" if data["conforms"] else "fail", total - passed)
             if data["conforms"]:
-                print(f"::notice::conformance {passed}/{total} — the standard is met")
+                note("notice", f"conformance {passed}/{total} - the standard is met")
             else:
-                print(f"::error::conformance {passed}/{total} — see the suite output above")
+                note("error", f"conformance {passed}/{total} - see the suite output above")
             raise SystemExit(0 if data["conforms"] or failon == "never" else 1)
 
         if mode == "adopt":
             count = data.get("with_findings", 0)
             if count:
                 for kind, n in sorted(data.get("findings_by_kind", {}).items(), key=lambda kv: -kv[1]):
-                    print(f"::warning::{n} x {kind}")
+                    note("warning", f"{n} x {kind}")
             emit("pass" if count == 0 else "fail", count)
             raise SystemExit(0 if count == 0 or failon == "never" else 1)
 
@@ -172,9 +183,9 @@ runs:
         warnings = data.get("warnings", [])
         count = len(errors) if failon == "errors" else len(errors) + len(warnings)
         for message in errors:
-            print(f"::error::{message.splitlines()[0]}")
+            note("error", message.splitlines()[0])
         for message in warnings:
-            print(f"::warning::{message.splitlines()[0]}")
+            note("warning", message.splitlines()[0])
         emit("pass" if count == 0 else "fail", count)
         raise SystemExit(0 if count == 0 or failon == "never" else 1)
         PY

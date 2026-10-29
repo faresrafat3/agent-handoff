@@ -116,7 +116,7 @@ agent-handoff context T-0001   # you paste the generated pack into a fresh sessi
 
 ```sh
 $ python3 -m unittest discover -s tests
-Ran 81 tests
+Ran 82 tests
 OK
 ```
 

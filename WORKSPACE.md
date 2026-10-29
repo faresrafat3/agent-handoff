@@ -15,7 +15,7 @@ session is told.
 | `schemas/*.json` | the record contract. Shipped to user workspaces by `init`. |
 | `skills/handoff/SKILL.md` | tells any agent to write conforming handoffs. |
 | `install.sh` | provisions schemas + skill, then verifies. Idempotent. |
-| `tests/` | 60 tests. Every guard has a test that fails when the guard is removed. |
+| `tests/` | 82 tests. Every guard has a test that fails when the guard is removed. |
 | `docs/STANDARD.md` | the normative spec: invariants, zones, record rules. |
 | `docs/acceptance-matrix.md` | what is `CLOSED` vs `DEFERRED`, and why. |
 | `docs/landscape.md` | when to use something else instead. |
